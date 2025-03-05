@@ -136,75 +136,7 @@ namespace GoT
                 TimeSpan debouncePeriod = TimeSpan.FromMilliseconds(500);
                 // Set up file watcher
                 
-                /////////////////////////////////////////////////////
-                long offset = 0;
-                FileSystemWatcher fsw = new FileSystemWatcher
-                {
-                    Path = directory,
-                    Filter = fileName,
-                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
-                    EnableRaisingEvents = true
-                };
-                using (FileStream file = File.Open(
-                logFilePath,
-                FileMode.Open,
-                FileAccess.Read,
-                FileShare.ReadWrite))
-                {
-                    using (StreamReader reader = new StreamReader(file))
-                    {
-                        // Get the initial file size (ignore existing content)
-                        offset = file.Length;
-
-                        // Start monitoring for changes
-                        fsw.Changed += (sender, e) =>
-                        {
-                            try
-                            {
-                                file.Seek(offset, SeekOrigin.Begin); // Move to the last read position
-                                var newLines = new StringBuilder(); // Store all new lines as a single string
-
-                                while (!reader.EndOfStream)
-                                {
-                                    string line = reader.ReadLine();
-                                    if (line != null)
-                                    {
-                                        // Append the new line to test.txt
-                                        File.AppendAllText("C:\\Logs\\test.txt", line + Environment.NewLine);
-                                        Console.WriteLine(line); // Optional: Print to console
-
-                                        // Append the new line to the StringBuilder
-                                        newLines.AppendLine(line);
-                                    }
-                                }
-
-                                // If there are new lines, insert them as a single document in MongoDB
-                                if (newLines.Length > 0)
-                                {
-                                    var document = new BsonDocument
-                                {
-                                    { "log_entries", newLines.ToString() }, // Store all lines as a single string
-                                    { "timestamp", DateTime.UtcNow }, // Add a timestamp
-                                    { "status","draft"}
-                                };
-                                }
-
-                                offset = file.Position; // Update the offset to the new end of the file
-                            }
-                            catch (Exception ex)
-                            {
-                                Console.WriteLine($"Error: {ex.Message}"); // Handle errors gracefully
-                            }
-                        };
-
-                        fsw.EnableRaisingEvents = true;    
-                         while (true)
-                    {
-                        Thread.Sleep(1000); // Sleep to prevent high CPU usage
-                    }
-                    }
-                }
-                /////////////////////////////////////////////////////
+               
                 FileSystemWatcher watcher = new FileSystemWatcher
                 {
                     Path = "C:\\Logs",
