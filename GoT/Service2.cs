@@ -110,7 +110,8 @@ namespace GoT
                 // Get file path from configuration
                 var path = _configuration.GetSection("Path");
                 string logFilePath = path["file"];
-
+                var brand = configuration.GetSection("Brand");
+                _defaultBrandName = brand["DefaultBrandName"];
                 if (string.IsNullOrEmpty(logFilePath))
                 {
                     _logger.Error("Log file path is not configured in appsettings.json");
