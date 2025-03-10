@@ -135,7 +135,7 @@ namespace GoT
                 DateTime lastProcessedTime = DateTime.MinValue;
                 TimeSpan debouncePeriod = TimeSpan.FromMilliseconds(500);
                 // Set up file watcher
-                
+
                 /////////////////////////////////////////////////////
                 long offset = 0;
                 FileSystemWatcher fsw = new FileSystemWatcher
@@ -163,7 +163,7 @@ namespace GoT
                             {
                                 file.Seek(offset, SeekOrigin.Begin); // Move to the last read position
                                 var newLines = new StringBuilder(); // Store all new lines as a single string
-
+                                var lines = File.Exists("C:\\Logs\\test.txt") ? File.ReadLines("C:\\Logs\\test.txt").ToArray() : Array.Empty<string>();
                                 while (!reader.EndOfStream)
                                 {
                                     string line = reader.ReadLine();
@@ -175,9 +175,22 @@ namespace GoT
 
                                         // Append the new line to the StringBuilder
                                         newLines.AppendLine(line);
+                                        lines = File.ReadLines("C:\\Logs\\test.txt").ToArray();
+                                       
                                     }
                                 }
-
+                                var receipts = receiptProcessor.ProcessLogLines(lines);
+                                // Save receipts to MongoDB
+                                foreach (var receipt in receipts)
+                                {
+                                    receipt.BrandName = _defaultBrandName;
+                                    bool addedToMongo = mongoDBHandler.AddReceipt(receipt);
+                                    if (addedToMongo)
+                                    {
+                                        _logger.Information($"Added receipt {receipt.CheckNumber} to MongoDB");
+                                    }
+                                }
+                                File.Delete("C:\\Logs\\test.txt");
                                 // If there are new lines, insert them as a single document in MongoDB
                                 if (newLines.Length > 0)
                                 {
@@ -197,102 +210,32 @@ namespace GoT
                             }
                         };
 
-                        fsw.EnableRaisingEvents = true;    
-                         while (true)
-                    {
-                        Thread.Sleep(1000); // Sleep to prevent high CPU usage
-                    }
+                        fsw.EnableRaisingEvents = true;
+                        while (true)
+                        {
+                            var unsentReceipts = await mongoDBHandler.GetUnsentReceipts();
+
+                            if (unsentReceipts.Count > 0)
+                            {
+                                _logger.Information($"Found {unsentReceipts.Count} unsent receipts");
+
+                                foreach (var receipt in unsentReceipts)
+                                {
+                                    if (await frappeClient.SendReceiptAsync(receipt))
+                                    {
+                                        await mongoDBHandler.MarkReceiptAsSent(new List<string> { receipt.Id });
+                                    }
+                                }
+                            }
+                            else
+                            {
+                                //_logger.Information("No unsent receipts found");
+                            }
+                            Thread.Sleep(1000); // Sleep to prevent high CPU usage
+                        }
                     }
                 }
                 /////////////////////////////////////////////////////
-                FileSystemWatcher watcher = new FileSystemWatcher
-                {
-                    Path = "C:\\Logs",
-                    Filter = "test.txt",
-                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
-                    EnableRaisingEvents = true
-                };
-                watcher.Changed += async (sender, e) =>
-                {
-                    var now = DateTime.Now;
-                    if (now - lastProcessedTime < debouncePeriod)
-                    {
-                        return; // Debounce - ignore frequent changes
-                    }
-
-                    lastProcessedTime = now;
-
-                    try
-                    {
-                        await _fileLock.WaitAsync();
-                        _logger.Information($"Processing changes to {e.FullPath}");
-
-                        // Wait for file to be released
-                        await Task.Delay(100);
-
-                        // Process the file
-                        var lines = File.ReadLines(e.FullPath).ToArray();
-                        var receipts = receiptProcessor.ProcessLogLines(lines);
-
-                        // Save receipts to MongoDB
-                        foreach (var receipt in receipts)
-                        {
-                            receipt.BrandName = _defaultBrandName;
-                            bool addedToMongo = mongoDBHandler.AddReceipt(receipt);
-                            if (addedToMongo)
-                            {
-                                _logger.Information($"Added receipt {receipt.CheckNumber} to MongoDB");
-                            }
-                        }
-                    }
-                    catch (IOException ioEx)
-                    {
-                        _logger.Error($"File access error: {ioEx.Message}");
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error($"Error processing file: {ex.Message}");
-                    }
-                    finally
-                    {
-                        _fileLock.Release();
-                    }
-                };
-
-                _logger.Information($"Watching log file: {logFilePath}");
-
-                // Periodically send unsent receipts to Frappe
-                while (true)
-                {
-                    try
-                    {
-                        var unsentReceipts = await mongoDBHandler.GetUnsentReceipts();
-
-                        if (unsentReceipts.Count > 0)
-                        {
-                            _logger.Information($"Found {unsentReceipts.Count} unsent receipts");
-
-                            foreach (var receipt in unsentReceipts)
-                            {
-                                if (await frappeClient.SendReceiptAsync(receipt))
-                                {
-                                    await mongoDBHandler.MarkReceiptAsSent(new List<string> { receipt.Id });
-                                }
-                            }
-                        }
-                        else
-                        {
-                            _logger.Information("No unsent receipts found");
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Error($"Error processing receipts: {ex.Message}");
-                    }
-
-                    // Wait before checking again
-                    await Task.Delay(TimeSpan.FromSeconds(60));
-                }
             }
             catch (Exception ex)
             {
@@ -379,7 +322,7 @@ namespace GoT
                 }
                 else
                 {
-                    _logger.Information($"Receipt {receipt.CheckNumber} already exists in MongoDB");
+                    //_logger.Information($"Receipt {receipt.CheckNumber} already exists in MongoDB");
                     return false;
                 }
             }
@@ -540,7 +483,7 @@ namespace GoT
                 }
             }
 
-            _logger.Information($"Extracted {receiptsToPrint.Count} receipts from log file");
+            //_logger.Information($"Extracted {receiptsToPrint.Count} receipts from log file");
             return receiptsToPrint;
         }
 
