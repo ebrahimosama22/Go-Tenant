@@ -247,51 +247,75 @@ namespace GoT
 
     public class MongoDBHandler
     {
-        private readonly IMongoCollection<Receipt> _receiptCollection;
+        private  IMongoCollection<Receipt> _receiptCollection;
         private readonly ILogger _logger;
+        private readonly IConfiguration _configuration;
+        private readonly int _maxRetryAttempts = 20; // Maximum number of retry attempts
+        private readonly int _retryDelayMilliseconds = 5000; // Delay between retries in milliseconds
 
         public MongoDBHandler(IConfiguration configuration, ILogger logger)
         {
             _logger = logger;
+            _configuration = configuration;
+            InitializeMongoDB();
+        }
 
-            try
+        private void InitializeMongoDB()
+        {
+            int retryCount = 0;
+            while (retryCount < _maxRetryAttempts)
             {
-                var mongoConfig = configuration.GetSection("MongoDB");
-
-                var connectionString = mongoConfig["ConnectionString"];
-                var databaseName = mongoConfig["DatabaseName"];
-                var collectionName = mongoConfig["CollectionName"];
-
-                if (string.IsNullOrEmpty(connectionString) ||
-                    string.IsNullOrEmpty(databaseName) ||
-                    string.IsNullOrEmpty(collectionName))
+                try
                 {
-                    throw new ArgumentException("MongoDB configuration is incomplete");
+                    var mongoConfig = _configuration.GetSection("MongoDB");
+
+                    var connectionString = mongoConfig["ConnectionString"];
+                    var databaseName = mongoConfig["DatabaseName"];
+                    var collectionName = mongoConfig["CollectionName"];
+
+                    if (string.IsNullOrEmpty(connectionString) ||
+                        string.IsNullOrEmpty(databaseName) ||
+                        string.IsNullOrEmpty(collectionName))
+                    {
+                        throw new ArgumentException("MongoDB configuration is incomplete");
+                    }
+
+                    var settings = MongoClientSettings.FromConnectionString(connectionString);
+                    settings.ServerSelectionTimeout = TimeSpan.FromSeconds(5);
+
+                    var client = new MongoClient(settings);
+                    var database = client.GetDatabase(databaseName);
+                    _receiptCollection = database.GetCollection<Receipt>(collectionName);
+
+                    // Create index for faster lookups
+                    var indexKeysDefinition = Builders<Receipt>.IndexKeys
+                        .Ascending(nameof(Receipt.ChkNumber))
+                        .Ascending(nameof(Receipt.Date))
+                        .Ascending(nameof(Receipt.Time));
+
+                    _receiptCollection.Indexes.CreateOne(
+                        new CreateIndexModel<Receipt>(indexKeysDefinition,
+                            new CreateIndexOptions { Unique = true, Background = true }));
+
+                    _logger.Information("MongoDB connection established successfully");
+                    return; // Exit the loop if connection is successful
                 }
+                catch (Exception ex)
+                {
+                    retryCount++;
+                    _logger.Error($"Failed to initialize MongoDB (Attempt {retryCount}/{_maxRetryAttempts}): {ex.Message}");
 
-                var settings = MongoClientSettings.FromConnectionString(connectionString);
-                settings.ServerSelectionTimeout = TimeSpan.FromSeconds(5);
-
-                var client = new MongoClient(settings);
-                var database = client.GetDatabase(databaseName);
-                _receiptCollection = database.GetCollection<Receipt>(collectionName);
-
-                // Create index for faster lookups
-                var indexKeysDefinition = Builders<Receipt>.IndexKeys
-                    .Ascending(nameof(Receipt.ChkNumber))
-                    .Ascending(nameof(Receipt.Date))
-                    .Ascending(nameof(Receipt.Time));
-
-                _receiptCollection.Indexes.CreateOne(
-                    new CreateIndexModel<Receipt>(indexKeysDefinition,
-                        new CreateIndexOptions { Unique = true, Background = true }));
-
-                _logger.Information("MongoDB connection established successfully");
-            }
-            catch (Exception ex)
-            {
-                _logger.Error($"Failed to initialize MongoDB: {ex.Message}");
-                throw;
+                    if (retryCount < _maxRetryAttempts)
+                    {
+                        _logger.Information($"Retrying in {_retryDelayMilliseconds / 1000} seconds...");
+                        Thread.Sleep(_retryDelayMilliseconds); // Wait before retrying
+                    }
+                    else
+                    {
+                        _logger.Error("Max retry attempts reached. MongoDB initialization failed.");
+                        throw; // Re-throw the exception after max retries
+                    }
+                }
             }
         }
 
